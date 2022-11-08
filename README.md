@@ -4,7 +4,8 @@ This is a simple implementation of the hash-table data structure in C, using lin
 
 ### Project Specifications
 - The hash table stores string only key-value pairs
-- The hash table has a max size of 53 pairs
+- The hash table has an initial size of 53 pairs
+- The hash table can be resized to bigger & smaller sizes according to its load
 - Collision handling is done using the separate chaining technique
 - The separate chaining technique is implemented using a singly linked list
 
