@@ -1,5 +1,6 @@
 #include <stdlib.h>
 #include <string.h>
+#include <math.h>
 #include "hash_table.h"
 
 const int HT_PRIME = 151; //arbitrary prime number > 128 needed for hashing
@@ -9,17 +10,54 @@ const int HT_INITIAL_BASE_SIZE = 53; //arbitrary hash-table max size
 
 static void free_item(item* ht_item);
 static linked_list* del_ht_item(hash_table* ht, linked_list* list, item* ht_item);
-static void del_ht_list(linked_list* list);
+static linked_list* del_ht_list(linked_list* list);
 static item* search_ht_list(linked_list* list, const char* k);
 static linked_list* new_list(item* head);
 static void insert_list_item(linked_list* list, item* new_item);
 static item* new_ht_item(const char* k, const char* v);
+static void resize_ht(hash_table* ht, const int dir);
+static hash_table* new_resized_ht(const int base_size);
 hash_table* new_ht();
 void del_ht(hash_table* ht);
 static int hash_ht_item(const char* s, const int special_prime, const int num_buckets);
 void insert_ht_item(hash_table* ht, const char* key, const char* value);
 char* search_ht_item(hash_table* ht, const char* key);
 void remove_ht_item(hash_table* ht, const char* key);
+
+//Maths Functions Needed for Resizing:
+
+int is_prime(const int x) 
+{
+	if (x < 2) 
+	{
+		return -1; //undefined
+	}
+	if (x < 4) 
+	{
+		return 1; //prime
+	}
+	if ((x % 2) == 0) 
+	{
+		return 0; //not prime
+	}
+	for (int i = 3; i <= floor(sqrt((double)x)); i += 2) 
+	{
+		if ((x%i) == 0) 
+		{
+			return 0;
+		}
+	}
+	return 1;
+}
+
+int next_prime(int x) 
+{
+	while (is_prime(x) != 1) 
+	{
+		x++;
+	}
+	return x;
+}
 
 //Functions:
 
@@ -73,7 +111,7 @@ static linked_list* del_ht_item(hash_table* ht, linked_list* list, item* ht_item
 }
 
 //deletes an entire list from the hash-table
-static void del_ht_list(linked_list* list)
+static linked_list* del_ht_list(linked_list* list)
 {
 	item* cur = list->head;
 	while (cur != NULL)
@@ -84,6 +122,7 @@ static void del_ht_list(linked_list* list)
 	}
 	free(list);
 	list = NULL;
+	return list;
 }
 
 //search for an item in the linked list with a specific key
@@ -126,14 +165,79 @@ static item* new_ht_item(const char* k, const char* v)
 	return ht_item;
 }
 
-//creates new hash-table with size = HT_INITIAL_BASE_SIZE
-hash_table* new_ht() 
+//creates & initializes a new hash-table
+static hash_table* new_resized_ht(const int base_size) 
 {
 	hash_table* ht = malloc(sizeof(hash_table));
-	ht->size = next_prime(HT_INITIAL_BASE_SIZE);
+	ht->base_size = base_size;
+	ht->size = next_prime(ht->base_size); 
 	ht->count = 0;
-	ht->lists = calloc((size_t)ht->size, sizeof(linked_list*)); //array of pointers to linked lists
-	return ht;
+	ht->lists = calloc((size_t)ht->size, sizeof(linked_list*)); 
+	return ht; 
+}
+
+//resize hash-table to bigger(dir=1) or smaller(dir=-1) size
+static void resize_ht(hash_table* ht, const int dir) 
+{
+	int new_size;
+	if (dir == 1) //resize to bigger size
+	{
+		new_size = ht->base_size * 2;
+	}
+	else if (dir == -1) //resize to smaller size
+	{
+		new_size = ht->base_size / 2;
+	}
+	else 
+	{
+		return;
+	}
+
+	const int base_size = new_size;
+	if (base_size < HT_INITIAL_BASE_SIZE) //resizing to less than minimum
+	{
+		return;
+	}
+	
+	//insert existing items into new HT:
+	hash_table* new_ht = new_resized_ht(base_size);
+	for (int i = 0; i < ht->size; i++) 
+	{
+		linked_list* list = ht->lists[i];
+		if (list != NULL)
+		{
+			item* cur = list->head;
+			while (cur != NULL)
+			{
+				insert_ht_item(new_ht, cur->key, cur->value);
+				cur = cur->next;
+			}
+		}
+	}
+
+	//update base_size & count:
+	ht->base_size = new_ht->base_size;
+	ht->count = new_ht->count;
+
+	//swaping is done to make the freeing/deleting easier:
+
+	//swap size:
+	const int tmp_size = ht->size;
+	ht->size = new_ht->size;
+	new_ht->size = tmp_size;
+
+	//swap items:
+	linked_list** tmp_lists = ht->lists;
+	ht->lists = new_ht->lists;
+	new_ht->lists = tmp_lists;
+
+	del_ht(new_ht);
+}
+
+//returns new hash-table with base size = HT_INITIAL_BASE_SIZE
+hash_table* new_ht() 
+{
+	return new_resized_ht(HT_INITIAL_BASE_SIZE);
 }
 
 //delete entire hash-table
@@ -144,7 +248,7 @@ void del_ht(hash_table* ht)
 		linked_list* list = ht->lists[i];
 		if (list != NULL) 
 		{
-			del_ht_list(list);
+			ht->lists[i] = del_ht_list(list);
 		}
 	}
 	free(ht->lists); 
@@ -174,6 +278,12 @@ static int hash_ht_item(const char* s, const int special_prime, const int num_bu
 //insert a key-value pair into hash-table
 void insert_ht_item(hash_table* ht, const char* key, const char* value) 
 { 
+	const int load = ht->count * 100 / ht->size;
+	if (load > 70) 
+	{
+		resize_ht(ht, 1);
+	}
+
 	int index = hash_ht_item(key, HT_PRIME, ht->size); 
 	linked_list* list = ht->lists[index];
 	item* new_item = new_ht_item(key, value);
@@ -227,6 +337,12 @@ char* search_ht_item(hash_table* ht, const char* key)
 //remove an item with a specific key from the hash-table
 void remove_ht_item(hash_table* ht, const char* key) 
 {
+	const int load = ht->count * 100 / ht->size;
+	if (load < 10) 
+	{
+		resize_ht(ht, -1);
+	}
+
 	int index = hash_ht_item(key, HT_PRIME, ht->size);
 	linked_list* list = ht->lists[index];
 
