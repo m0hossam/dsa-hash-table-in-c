@@ -16,6 +16,7 @@ typedef struct
 
 typedef struct
 {
+	int base_size;
 	int size;
 	int count;
 	linked_list** lists;
